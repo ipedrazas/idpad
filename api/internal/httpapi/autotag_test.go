@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,12 +21,34 @@ import (
 
 // fakeTagger stands in for the tagging service, recording what it was sent so
 // the tests can assert on the text the API extracts from an idea.
+//
+// The recorded fields are written from the server's handler goroutine and read
+// from the test's, so they are guarded: the ordering that makes the read safe
+// in practice comes from net/http's internals rather than from anything this
+// test establishes, which is exactly the kind of thing that flakes under -race
+// on a different schedule.
 type fakeTagger struct {
 	server *httptest.Server
+
+	mu sync.Mutex
 	// lastText is the text of the most recent request.
 	lastText string
 	// calls counts requests, so a test can prove no call was made.
 	calls int
+}
+
+// text returns the body of the most recent request.
+func (f *fakeTagger) text() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastText
+}
+
+// callCount returns how many requests the fake has served.
+func (f *fakeTagger) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
 }
 
 // newFakeTagger starts a tagging service that answers with tags, or — when
@@ -35,15 +58,17 @@ func newFakeTagger(t *testing.T, status int, tags []string, delay time.Duration)
 	fake := &fakeTagger{}
 
 	fake.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fake.calls++
-
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		var payload struct {
 			Text string `json:"text"`
 		}
 		require.NoError(t, json.Unmarshal(body, &payload), "request body: %s", body)
+
+		fake.mu.Lock()
+		fake.calls++
 		fake.lastText = payload.Text
+		fake.mu.Unlock()
 
 		if delay > 0 {
 			time.Sleep(delay)
@@ -99,7 +124,7 @@ func TestAutoTagAppliesSuggestions(t *testing.T) {
 	require.Contains(t, tagNames(tags), "custom resources")
 
 	// The title leads, then the body: the service sees the whole idea.
-	require.Equal(t, "Operators\nKubernetes operators reconcile desired state.", fake.lastText)
+	require.Equal(t, "Operators\nKubernetes operators reconcile desired state.", fake.text())
 
 	// The tags were persisted, not just returned.
 	var stored []model.Tag
@@ -211,7 +236,7 @@ func TestAutoTagRefusesAnEmptyIdea(t *testing.T) {
 	idea := createIdea(t, srv, "Operators", json.RawMessage(`{"type":"doc","content":[]}`))
 	tags := autoTag(t, srv, idea.ID)
 	require.Equal(t, []string{"kubernetes"}, slugsOf(tags))
-	require.Equal(t, "Operators", fake.lastText, "the title alone is sent when the body is empty")
+	require.Equal(t, "Operators", fake.text(), "the title alone is sent when the body is empty")
 }
 
 func TestAutoTagWhenNotConfigured(t *testing.T) {
@@ -231,7 +256,7 @@ func TestAutoTagOnMissingIdea(t *testing.T) {
 		"/api/v1/ideas/00000000-0000-7000-8000-000000000000/tags/auto", nil)
 	require.Equal(t, http.StatusNotFound, status)
 	require.Equal(t, "not_found", code)
-	require.Zero(t, fake.calls, "a missing idea is rejected before the service is called")
+	require.Zero(t, fake.callCount(), "a missing idea is rejected before the service is called")
 }
 
 func TestFeaturesReportsAutoTagging(t *testing.T) {

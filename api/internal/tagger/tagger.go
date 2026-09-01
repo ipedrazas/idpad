@@ -59,8 +59,10 @@ type response struct {
 // given. The returned names are raw: normalising and de-duplicating them is the
 // caller's job, since that is the same rule the rest of the API applies.
 //
-// Every failure is wrapped in ErrUnavailable, so an outage upstream is never
-// reported as a fault in the idea being tagged.
+// Every failure wraps ErrUnavailable, so an outage upstream is never reported
+// as a fault in the idea being tagged. The underlying cause is wrapped
+// alongside it rather than flattened into text, so a caller can still match on
+// it — context.DeadlineExceeded, say — and the log keeps the detail.
 func (c *Client) Tag(ctx context.Context, text string) ([]string, error) {
 	if !c.Enabled() {
 		return nil, fmt.Errorf("%w: no tagging service configured", ErrUnavailable)
@@ -76,19 +78,19 @@ func (c *Client) Tag(ctx context.Context, text string) ([]string, error) {
 
 	payload, err := json.Marshal(request{Text: text})
 	if err != nil {
-		return nil, fmt.Errorf("%w: encode request: %v", ErrUnavailable, err)
+		return nil, fmt.Errorf("%w: encode request: %w", ErrUnavailable, err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(payload))
 	if err != nil {
-		return nil, fmt.Errorf("%w: build request: %v", ErrUnavailable, err)
+		return nil, fmt.Errorf("%w: build request: %w", ErrUnavailable, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	res, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	defer func() { _ = res.Body.Close() }()
 
@@ -98,7 +100,7 @@ func (c *Client) Tag(ctx context.Context, text string) ([]string, error) {
 
 	body, err := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes))
 	if err != nil {
-		return nil, fmt.Errorf("%w: read response: %v", ErrUnavailable, err)
+		return nil, fmt.Errorf("%w: read response: %w", ErrUnavailable, err)
 	}
 
 	var decoded response
