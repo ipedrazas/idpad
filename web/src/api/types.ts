@@ -15,12 +15,27 @@ export interface Doc extends DocNode {
   content?: DocNode[]
 }
 
+/**
+ * Where an idea sits in its lifecycle. Unlike a tag it is a closed set with
+ * exactly one value per idea, so nothing can be both done and rejected.
+ */
+export type IdeaStatus = 'draft' | 'in_progress' | 'done' | 'rejected'
+
 export interface Idea {
   id: string
   title: string
   body: Doc
+  status: IdeaStatus
+  /** Moves only when the status does, so `updated_at` still means "edited". */
+  status_changed_at: string
   created_at: string
   updated_at: string
+}
+
+/** One lifecycle state with how many ideas are in it, for the filter chips. */
+export interface IdeaStatusSummary {
+  status: IdeaStatus
+  idea_count: number
 }
 
 export interface IdeaSummary extends Idea {

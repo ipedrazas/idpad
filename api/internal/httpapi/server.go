@@ -62,6 +62,11 @@ func (s *Server) Router() http.Handler {
 				r.Put("/", s.handleUpdateIdea)
 				r.Delete("/", s.handleDeleteIdea)
 
+				// Its own route, so autosaving the body and moving the idea
+				// along its lifecycle are writes that cannot overwrite one
+				// another.
+				r.Patch("/status", s.handleSetIdeaStatus)
+
 				r.Get("/comments", s.handleListComments)
 				r.Post("/comments", s.handleCreateComment)
 
@@ -91,6 +96,10 @@ func (s *Server) Router() http.Handler {
 			r.Get("/", s.handleListTags)
 			r.Delete("/unused", s.handleDeleteUnusedTags)
 		})
+
+		// The lifecycle states with their idea counts, which is what the
+		// list view's status filter renders.
+		r.Get("/statuses", s.handleListIdeaStatuses)
 
 		// Lets the UI hide affordances the deployment cannot serve, rather
 		// than offering a button that always fails.

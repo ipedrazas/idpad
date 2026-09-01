@@ -2,10 +2,12 @@ import { useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 
 import { IdeaCard } from '../components/IdeaCard'
+import { StatusBadge } from '../components/StatusBadge'
 import { TagChip } from '../components/TagChip'
 import { Button, EmptyState, ErrorState, Skeleton } from '../components/ui'
-import { useIdeas } from '../hooks/useIdeas'
+import { useIdeaStatuses, useIdeas } from '../hooks/useIdeas'
 import { useTags } from '../hooks/useTags'
+import { isIdeaStatus, statusLabel } from '../lib/status'
 
 /** The home view: every idea as a card, newest update first. */
 export function IdeaListPage() {
@@ -14,21 +16,32 @@ export function IdeaListPage() {
   // The filter lives in the URL, so a filtered view is shareable and the back
   // button steps through filters rather than leaving the page.
   const activeTags = useMemo(() => searchParams.getAll('tag'), [searchParams])
+  // An unknown status in a hand-edited URL is dropped rather than sent on, so
+  // a stale link degrades to a wider list instead of a validation error.
+  const activeStatuses = useMemo(
+    () => searchParams.getAll('status').filter(isIdeaStatus),
+    [searchParams],
+  )
   const query = searchParams.get('q') ?? ''
-  const filtering = activeTags.length > 0 || query !== ''
+  const filtering = activeTags.length > 0 || activeStatuses.length > 0 || query !== ''
 
-  const { data: ideas, isPending, error, refetch } = useIdeas({ tags: activeTags, q: query })
+  const { data: ideas, isPending, error, refetch } = useIdeas({
+    tags: activeTags,
+    statuses: activeStatuses,
+    q: query,
+  })
   const { data: vocabulary } = useTags()
+  const { data: statusCounts } = useIdeaStatuses()
 
-  /** Adds or removes one tag from the filter, keeping the rest intact. */
-  const toggleTag = (slug: string) => {
+  /** Adds or removes one value from a repeated parameter, keeping the rest. */
+  const toggle = (param: 'tag' | 'status', value: string) => {
     const next = new URLSearchParams(searchParams)
-    const current = next.getAll('tag')
-    next.delete('tag')
-    for (const tag of current) {
-      if (tag !== slug) next.append('tag', tag)
+    const current = next.getAll(param)
+    next.delete(param)
+    for (const kept of current) {
+      if (kept !== value) next.append(param, kept)
     }
-    if (!current.includes(slug)) next.append('tag', slug)
+    if (!current.includes(value)) next.append(param, value)
     setSearchParams(next, { replace: true })
   }
 
@@ -69,12 +82,34 @@ export function IdeaListPage() {
           className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500 dark:border-slate-700 dark:bg-slate-900"
         />
 
-        {offeredTags.length > 0 ? (
+        {/*
+          Statuses are ORed and tags ANDed, which is why they are two rows:
+          picking a second status widens the list, picking a second tag narrows
+          it, and putting them in one row would imply they behave alike.
+        */}
+        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by status">
+          {(statusCounts ?? []).map(({ status, idea_count }) => {
+            const active = activeStatuses.includes(status)
+            return (
+              <button
+                key={status}
+                type="button"
+                aria-pressed={active}
+                aria-label={`${statusLabel(status)} (${idea_count})`}
+                onClick={() => toggle('status', status)}
+              >
+                <StatusBadge status={status} count={idea_count} selected={active} />
+              </button>
+            )
+          })}
+        </div>
+
+        {offeredTags.length > 0 || filtering ? (
           <div className="flex flex-wrap items-center gap-1.5">
             {offeredTags.map((tag) => {
               const active = activeTags.includes(tag.slug)
               return (
-                <button key={tag.slug} type="button" onClick={() => toggleTag(tag.slug)}>
+                <button key={tag.slug} type="button" onClick={() => toggle('tag', tag.slug)}>
                   <TagChip tag={tag} count={tag.idea_count} active={active} />
                 </button>
               )
@@ -109,7 +144,7 @@ export function IdeaListPage() {
         filtering ? (
           <EmptyState
             title="Nothing matches that filter"
-            description="Try a different tag, or clear the filter to see everything."
+            description="Try a different status or tag, or clear the filter to see everything."
             action={
               <Button onClick={() => setSearchParams(new URLSearchParams(), { replace: true })}>
                 Clear filter

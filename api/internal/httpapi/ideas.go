@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -23,10 +24,17 @@ type createIdeaRequest struct {
 	Body  json.RawMessage `json:"body"`
 }
 
-// updateIdeaRequest is the PUT /ideas/{id} payload: a full replacement.
+// updateIdeaRequest is the PUT /ideas/{id} payload: a full replacement of the
+// title and body. Status is not part of it, so an autosaving editor can never
+// reset a status it was not showing.
 type updateIdeaRequest struct {
 	Title string          `json:"title"`
 	Body  json.RawMessage `json:"body"`
+}
+
+// setIdeaStatusRequest is the PATCH /ideas/{id}/status payload.
+type setIdeaStatusRequest struct {
+	Status string `json:"status"`
 }
 
 func (s *Server) handleCreateIdea(w http.ResponseWriter, r *http.Request) {
@@ -61,9 +69,10 @@ func (s *Server) handleCreateIdea(w http.ResponseWriter, r *http.Request) {
 
 // handleListIdeas lists ideas, narrowed by the optional query parameters:
 //
-//	?tag=a&tag=b   only ideas carrying every listed tag
-//	?q=text        case-insensitive title substring
-//	?exclude=uuid  drop one idea, so the link picker never offers self-linking
+//	?tag=a&tag=b        only ideas carrying every listed tag
+//	?status=a&status=b  only ideas in one of the listed states
+//	?q=text             case-insensitive title substring
+//	?exclude=uuid       drop one idea, so the link picker never offers self-linking
 func (s *Server) handleListIdeas(w http.ResponseWriter, r *http.Request) {
 	filter, err := parseIdeaFilter(r)
 	if err != nil {
@@ -91,6 +100,16 @@ func parseIdeaFilter(r *http.Request) (model.IdeaFilter, error) {
 			return model.IdeaFilter{}, validationError("tag %q is not a usable tag name", raw)
 		}
 		filter.TagSlugs = append(filter.TagSlugs, slug)
+	}
+
+	// Tags are ANDed and statuses ORed, because an idea carries many tags but
+	// sits in exactly one state: asking for two states can only mean "either".
+	for _, raw := range query["status"] {
+		status := model.IdeaStatus(strings.TrimSpace(raw))
+		if !status.Valid() {
+			return model.IdeaFilter{}, validationError("status %q is not a known status", raw)
+		}
+		filter.Statuses = append(filter.Statuses, status)
 	}
 
 	filter.Query = strings.TrimSpace(query.Get("q"))
@@ -166,6 +185,61 @@ func (s *Server) handleUpdateIdea(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, idea)
+}
+
+// handleSetIdeaStatus moves one idea along its lifecycle. It is a PATCH of its
+// own rather than a field on the PUT so that saving the body and changing the
+// status stay independent: neither write can clobber the other.
+func (s *Server) handleSetIdeaStatus(w http.ResponseWriter, r *http.Request) {
+	id, err := pathUUID(r, "ideaID", "idea")
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+
+	var req setIdeaStatusRequest
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, r, err)
+		return
+	}
+
+	status := model.IdeaStatus(strings.TrimSpace(req.Status))
+	if !status.Valid() {
+		writeError(w, r, validationError("status must be one of %s", quotedStatuses()))
+		return
+	}
+
+	idea, err := s.store.SetIdeaStatus(r.Context(), id, status)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, r, notFoundError("idea"))
+		return
+	}
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, idea)
+}
+
+// handleListIdeaStatuses reports every status with how many ideas are in it,
+// which is what the filter chips render. Counts ignore the current filter, as
+// the tag index's do.
+func (s *Server) handleListIdeaStatuses(w http.ResponseWriter, r *http.Request) {
+	counts, err := s.store.CountIdeasByStatus(r.Context())
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, counts)
+}
+
+// quotedStatuses renders the accepted statuses for an error message.
+func quotedStatuses() string {
+	quoted := make([]string, 0, len(model.IdeaStatuses))
+	for _, status := range model.IdeaStatuses {
+		quoted = append(quoted, strconv.Quote(string(status)))
+	}
+	return strings.Join(quoted, ", ")
 }
 
 func (s *Server) handleDeleteIdea(w http.ResponseWriter, r *http.Request) {

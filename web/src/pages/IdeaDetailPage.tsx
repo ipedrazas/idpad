@@ -6,6 +6,7 @@ import { CommentSidebar } from '../components/CommentSidebar'
 import { IdeaEditor } from '../components/editor/IdeaEditor'
 import { LinkPanel } from '../components/LinkPanel'
 import { ResourcePanel } from '../components/ResourcePanel'
+import { StatusPicker } from '../components/StatusPicker'
 import { TagEditor } from '../components/TagEditor'
 import { Button, ErrorState, Panel, Skeleton, Spinner } from '../components/ui'
 import {
@@ -15,13 +16,14 @@ import {
   useSetCommentStatus,
   useUpdateComment,
 } from '../hooks/useComments'
-import { useDeleteIdea, useIdea, useIdeas, useUpdateIdea } from '../hooks/useIdeas'
+import { useDeleteIdea, useIdea, useIdeas, useSetIdeaStatus, useUpdateIdea } from '../hooks/useIdeas'
 import { useCreateLink, useDeleteLink, useLinks } from '../hooks/useLinks'
 import { useCreateResource, useDeleteResource, useResources } from '../hooks/useResources'
 import { useFeatures } from '../hooks/useFeatures'
 import { useAutoTagIdea, useIdeaTags, useSetIdeaTags, useTags } from '../hooks/useTags'
 import { anchorMatchesDoc } from '../lib/anchor'
 import { absoluteTime, relativeTime } from '../lib/format'
+import { statusLabel } from '../lib/status'
 
 /** How long after the last keystroke the idea is saved. */
 const AUTOSAVE_DELAY_MS = 1_200
@@ -42,6 +44,7 @@ export function IdeaDetailPage() {
 
   const ideaId = id ?? ''
   const updateIdea = useUpdateIdea(ideaId)
+  const setIdeaStatus = useSetIdeaStatus(ideaId)
   const deleteIdea = useDeleteIdea()
   const createComment = useCreateComment(ideaId)
   const updateComment = useUpdateComment(ideaId)
@@ -215,6 +218,20 @@ export function IdeaDetailPage() {
         className="w-full border-none bg-transparent text-3xl font-semibold tracking-tight outline-none placeholder:text-slate-300"
         placeholder="Untitled idea"
       />
+
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <StatusPicker
+          status={ideaQuery.data.status}
+          pending={setIdeaStatus.isPending}
+          onChange={(next) => setIdeaStatus.mutate(next)}
+        />
+        <span className="text-xs text-slate-400" title={absoluteTime(ideaQuery.data.status_changed_at)}>
+          {statusLabel(ideaQuery.data.status)} since {relativeTime(ideaQuery.data.status_changed_at)}
+        </span>
+        {setIdeaStatus.error ? (
+          <span className="text-xs text-rose-600 dark:text-rose-400">{setIdeaStatus.error.message}</span>
+        ) : null}
+      </div>
 
       <div className="mt-4 max-w-2xl">
         <TagEditor

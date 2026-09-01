@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 
 import type { IdeaSummary } from '../api/types'
 import { absoluteTime, bodyPreview, relativeTime } from '../lib/format'
+import { StatusBadge } from './StatusBadge'
 import { TagChip } from './TagChip'
 
 /** How many tag chips a card shows before collapsing the rest into a count. */
@@ -25,9 +26,12 @@ export function IdeaCard({ idea, activeTags = [] }: { idea: IdeaSummary; activeT
       to={`/ideas/${idea.id}`}
       className="block h-full rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700"
     >
-      <h2 className="line-clamp-2 text-base font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-        {idea.title}
-      </h2>
+      <div className="flex items-start justify-between gap-2">
+        <h2 className="line-clamp-2 text-base font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+          {idea.title}
+        </h2>
+        <StatusBadge status={idea.status} className="mt-0.5 shrink-0" />
+      </div>
 
       <p className="mt-2 line-clamp-3 min-h-[3.5rem] text-sm text-slate-500 dark:text-slate-400">
         {preview || <span className="italic text-slate-400">No content yet</span>}

@@ -21,6 +21,33 @@ func (s CommentStatus) Valid() bool {
 	return s == StatusOpen || s == StatusResolved
 }
 
+// IdeaStatus is where an idea sits in its lifecycle. Unlike a tag it is a
+// closed set with exactly one value per idea, so nothing can be both done and
+// rejected, and the tag vocabulary stays about subject matter.
+type IdeaStatus string
+
+// Idea lifecycle states.
+const (
+	IdeaDraft      IdeaStatus = "draft"
+	IdeaInProgress IdeaStatus = "in_progress"
+	IdeaDone       IdeaStatus = "done"
+	IdeaRejected   IdeaStatus = "rejected"
+)
+
+// IdeaStatuses lists every status the API accepts, in lifecycle order, which
+// is also the order the filter chips and the picker render them.
+var IdeaStatuses = []IdeaStatus{IdeaDraft, IdeaInProgress, IdeaDone, IdeaRejected}
+
+// Valid reports whether s is a status the API accepts.
+func (s IdeaStatus) Valid() bool {
+	for _, candidate := range IdeaStatuses {
+		if s == candidate {
+			return true
+		}
+	}
+	return false
+}
+
 // ResourceType distinguishes the two kinds of attachment an idea can carry.
 type ResourceType string
 
@@ -38,11 +65,15 @@ func (t ResourceType) Valid() bool {
 // Idea is a note with a rich-text body. Body holds the TipTap/ProseMirror
 // document JSON verbatim so no mark or node is ever lost in a round-trip.
 type Idea struct {
-	ID        string          `json:"id"`
-	Title     string          `json:"title"`
-	Body      json.RawMessage `json:"body"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID     string          `json:"id"`
+	Title  string          `json:"title"`
+	Body   json.RawMessage `json:"body"`
+	Status IdeaStatus      `json:"status"`
+	// StatusChangedAt moves only when the status does, so UpdatedAt keeps
+	// meaning "the body was last edited".
+	StatusChangedAt time.Time `json:"status_changed_at"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // IdeaSummary is an idea as rendered in the list view, carrying the counts
@@ -60,6 +91,10 @@ type IdeaFilter struct {
 	// TagSlugs keeps only ideas carrying every listed tag, so stacking tags
 	// narrows the list rather than widening it.
 	TagSlugs []string
+	// Statuses keeps only ideas in one of the listed states. Statuses are
+	// mutually exclusive, so listing several widens the results where
+	// stacking tags narrows them.
+	Statuses []IdeaStatus
 	// Query is a case-insensitive substring match against the title.
 	Query string
 	// ExcludeID drops one idea from the results, which is what the link
@@ -123,6 +158,14 @@ type Tag struct {
 type TagSummary struct {
 	Tag
 	IdeaCount int `json:"idea_count"`
+}
+
+// IdeaStatusSummary is one lifecycle state with how many ideas are in it.
+// Every status is reported, including the empty ones, so the filter chips
+// neither appear nor disappear as ideas move between states.
+type IdeaStatusSummary struct {
+	Status    IdeaStatus `json:"status"`
+	IdeaCount int        `json:"idea_count"`
 }
 
 // Relation is the kind of connection one idea has to another.
