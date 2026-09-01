@@ -18,6 +18,7 @@ export const queryKeys = {
   ideaTags: (ideaId: string) => ['ideas', ideaId, 'tags'] as const,
   links: (ideaId: string) => ['ideas', ideaId, 'links'] as const,
   tags: ['tags'] as const,
+  statuses: ['statuses'] as const,
   features: ['features'] as const,
 }
 
@@ -28,6 +29,7 @@ export const queryKeys = {
 function normaliseFilter(filter: IdeaFilter | undefined) {
   return {
     tags: [...(filter?.tags ?? [])].sort(),
+    statuses: [...(filter?.statuses ?? [])].sort(),
     q: filter?.q ?? '',
     exclude: filter?.exclude ?? '',
   }

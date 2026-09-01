@@ -5,6 +5,8 @@ import type {
   Doc,
   Features,
   Idea,
+  IdeaStatus,
+  IdeaStatusSummary,
   IdeaSummary,
   Link,
   Relation,
@@ -114,6 +116,11 @@ export interface CreateResourceInput {
 export interface IdeaFilter {
   /** Only ideas carrying every listed tag slug, so stacking tags narrows. */
   tags?: string[]
+  /**
+   * Only ideas in one of the listed states. An idea sits in exactly one, so
+   * listing several widens the results where stacking tags narrows them.
+   */
+  statuses?: IdeaStatus[]
   /** Case-insensitive title substring. */
   q?: string
   /** Drop one idea, so the link picker never offers a link to itself. */
@@ -130,6 +137,7 @@ export interface CreateLinkInput {
 function ideaQuery(filter: IdeaFilter = {}): string {
   const params = new URLSearchParams()
   for (const tag of filter.tags ?? []) params.append('tag', tag)
+  for (const status of filter.statuses ?? []) params.append('status', status)
   if (filter.q) params.set('q', filter.q)
   if (filter.exclude) params.set('exclude', filter.exclude)
   const query = params.toString()
@@ -148,6 +156,17 @@ export const api = {
     request<Idea>(`/ideas/${id}`, { method: 'PUT', ...json(input) }),
 
   deleteIdea: (id: string) => request<void>(`/ideas/${id}`, { method: 'DELETE' }),
+
+  /**
+   * Moves an idea along its lifecycle. Its own request rather than a field on
+   * updateIdea, so the editor's autosave can never reset a status it was not
+   * showing, and a move never overwrites unsaved text.
+   */
+  setIdeaStatus: (id: string, status: IdeaStatus) =>
+    request<Idea>(`/ideas/${id}/status`, { method: 'PATCH', ...json({ status }) }),
+
+  /** Every lifecycle state with its idea count, empty states included. */
+  listStatuses: () => request<IdeaStatusSummary[]>('/statuses'),
 
   listComments: (ideaId: string) => request<Thread[]>(`/ideas/${ideaId}/comments`),
 

@@ -5,6 +5,7 @@ rich-text editor, highlight any part of it and leave a threaded comment, and
 attach images and links that stay with the idea.
 
 - **Ideas** — create, list, edit and delete notes with headings, lists, bold and italic.
+- **Status** — every idea sits in exactly one of draft, in progress, done or rejected. Move it from the detail view; filter the list by one state or several.
 - **Comments** — anchor a thread to an exact text selection, reply, edit, resolve. Highlights are rendered over the anchored text and cycle through a colour palette.
 - **Resources** — attach image and link URLs, shown as thumbnails and cards.
 - **Tags** — a shared vocabulary rather than free text: spellings fold onto one slug, so "Machine Learning" and "machine-learning" are the same tag. Filter the list by one tag or stack several to narrow.
@@ -119,9 +120,10 @@ request breaks a domain rule.
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/api/v1/ideas` | create an idea |
-| `GET` | `/api/v1/ideas` | list ideas with counts and tags; filter with `?tag=`, `?q=`, `?exclude=` |
+| `GET` | `/api/v1/ideas` | list ideas with counts and tags; filter with `?tag=`, `?status=`, `?q=`, `?exclude=` |
 | `GET` | `/api/v1/ideas/{id}` | fetch an idea |
 | `PUT` | `/api/v1/ideas/{id}` | replace title and body |
+| `PATCH` | `/api/v1/ideas/{id}/status` | set `draft`, `in_progress`, `done` or `rejected` |
 | `DELETE` | `/api/v1/ideas/{id}` | delete an idea and everything on it |
 | `GET` | `/api/v1/ideas/{id}/comments` | threads with replies and `detached` |
 | `POST` | `/api/v1/ideas/{id}/comments` | start a thread, or reply with `parent_id` |
@@ -139,11 +141,17 @@ request breaks a domain rule.
 | `POST` | `/api/v1/ideas/{id}/links` | connect this idea to another |
 | `DELETE` | `/api/v1/links/{id}` | remove a connection (from either end) |
 | `POST` | `/api/v1/ideas/{id}/tags/auto` | suggest tags for the idea and merge them in |
+| `GET` | `/api/v1/statuses` | the four lifecycle states with `idea_count` |
 | `GET` | `/api/v1/features` | which optional capabilities this server has |
 
 The list endpoint's `tag` parameter may be repeated, and stacking narrows:
 `?tag=go&tag=postgres` returns only ideas carrying both. Values are slugified,
 so `?tag=Machine%20Learning` and `?tag=machine-learning` are the same filter.
+
+`status` may be repeated too, but stacking widens: an idea is in exactly one
+state, so `?status=draft&status=done` can only mean "either". The two filters
+are combined with each other, so `?tag=go&status=in_progress` is the ideas that
+are both.
 
 ### Walkthrough with curl
 
@@ -228,6 +236,21 @@ curl -s localhost:8080/api/v1/tags | jq '.data[] | {slug, name, idea_count}'
 
 # Stacking tags narrows the list.
 curl -s 'localhost:8080/api/v1/ideas?tag=machine-learning&tag=product' | jq '.data[].title'
+```
+
+Move an idea along its lifecycle:
+
+```bash
+# Every idea starts as a draft.
+curl -sX PATCH localhost:8080/api/v1/ideas/$IDEA/status \
+  -H 'Content-Type: application/json' \
+  -d '{"status":"in_progress"}' | jq '.data | {status, status_changed_at, updated_at}'
+
+# Stacking statuses widens: an idea is in exactly one of them.
+curl -s 'localhost:8080/api/v1/ideas?status=draft&status=in_progress' | jq '.data[].title'
+
+# Every state, empty ones included, which is what the filter chips render.
+curl -s localhost:8080/api/v1/statuses | jq '.data[] | {status, idea_count}'
 ```
 
 Ask the tagging service to suggest tags, if one is configured:
@@ -344,6 +367,27 @@ tested without mounting an editor at all.
 - **Autosave.** The detail view saves the title and body 1.2 s after the last
   keystroke, and flushes pending edits before creating a comment so the server
   is always anchoring against text it can see.
+
+### Status is a column, not a tag
+
+Draft, in progress, done and rejected went in as a `status` column with a check
+constraint rather than four tags. A tag set is open and many-valued: nothing
+would stop an idea being tagged both `done` and `rejected`, and four
+process labels would sit in the vocabulary index alongside the subjects the
+ideas are actually about. A status is closed and single-valued, and the
+database is the right place to say so.
+
+It moves through `PATCH /ideas/{id}/status`, its own endpoint rather than a
+field on the `PUT`. The editor autosaves title and body every 1.2 s; if status
+rode along on that request, a tab left open on a stale idea would quietly
+restore the status it was showing. Separate endpoints make the two writes
+independent in both directions.
+
+`status_changed_at` is a second timestamp so `updated_at` keeps meaning "the
+body was edited". Marking an idea done changes nothing it says, and if it
+bumped `updated_at` the newest-first list would reshuffle every time something
+was filed away. Re-setting the status an idea already has leaves the timestamp
+alone, so the transition it records is a real one.
 
 ### Tags are a vocabulary, not strings
 

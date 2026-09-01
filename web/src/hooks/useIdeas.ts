@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, type IdeaFilter, type IdeaInput } from '../api/client'
-import type { Idea, IdeaSummary } from '../api/types'
+import type { Idea, IdeaStatus, IdeaStatusSummary, IdeaSummary } from '../api/types'
 import { queryKeys } from './queryKeys'
 
 /**
@@ -34,6 +34,8 @@ export function useCreateIdea() {
     onSuccess: (idea) => {
       queryClient.setQueryData(queryKeys.idea(idea.id), idea)
       void queryClient.invalidateQueries({ queryKey: queryKeys.ideas })
+      // A new idea is a new draft, so the status counts have moved too.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.statuses })
     },
   })
 }
@@ -52,6 +54,31 @@ export function useUpdateIdea(id: string) {
   })
 }
 
+/**
+ * Moves an idea along its lifecycle. The idea is written straight into the
+ * cache so the picker settles immediately, and both the list and the status
+ * counts are refetched because a move changes what each of them shows.
+ */
+export function useSetIdeaStatus(id: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (status: IdeaStatus) => api.setIdeaStatus(id, status),
+    onSuccess: (idea) => {
+      queryClient.setQueryData(queryKeys.idea(id), idea)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.ideas })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.statuses })
+    },
+  })
+}
+
+/** Every lifecycle state with its idea count, for the list view's filter. */
+export function useIdeaStatuses() {
+  return useQuery<IdeaStatusSummary[]>({
+    queryKey: queryKeys.statuses,
+    queryFn: () => api.listStatuses(),
+  })
+}
+
 export function useDeleteIdea() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -59,6 +86,7 @@ export function useDeleteIdea() {
     onSuccess: (_result, id) => {
       queryClient.removeQueries({ queryKey: queryKeys.idea(id) })
       void queryClient.invalidateQueries({ queryKey: queryKeys.ideas })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.statuses })
     },
   })
 }
