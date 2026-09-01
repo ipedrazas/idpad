@@ -1,0 +1,63 @@
+name: idpad
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-idpad}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-idpad}
+      POSTGRES_DB: ${POSTGRES_DB:-idpad}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # -U matters: without it pg_isready probes for the `root` role.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-idpad} -d ${POSTGRES_DB:-idpad}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: ./api
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-idpad}:${POSTGRES_PASSWORD:-idpad}@db:5432/${POSTGRES_DB:-idpad}?sslmode=disable
+      IDPAD_ADDR: ":8080"
+      IDPAD_LOG_LEVEL: ${IDPAD_LOG_LEVEL:-info}
+      IDPAD_LOG_FORMAT: ${IDPAD_LOG_FORMAT:-json}
+      IDPAD_CORS_ORIGINS: ${IDPAD_CORS_ORIGINS:-*}
+      IDPAD_MIGRATE_ON_START: ${IDPAD_MIGRATE_ON_START:-true}
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # The image is distroless, so the server probes itself.
+      test: ["CMD", "/server", "-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+    ports:
+      - "${WEB_PORT:-5173}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  pgdata:
