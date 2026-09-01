@@ -1,12 +1,49 @@
-import { Link } from 'react-router-dom'
+import { useMemo } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 
 import { IdeaCard } from '../components/IdeaCard'
+import { TagChip } from '../components/TagChip'
 import { Button, EmptyState, ErrorState, Skeleton } from '../components/ui'
 import { useIdeas } from '../hooks/useIdeas'
+import { useTags } from '../hooks/useTags'
 
 /** The home view: every idea as a card, newest update first. */
 export function IdeaListPage() {
-  const { data: ideas, isPending, error, refetch } = useIdeas()
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // The filter lives in the URL, so a filtered view is shareable and the back
+  // button steps through filters rather than leaving the page.
+  const activeTags = useMemo(() => searchParams.getAll('tag'), [searchParams])
+  const query = searchParams.get('q') ?? ''
+  const filtering = activeTags.length > 0 || query !== ''
+
+  const { data: ideas, isPending, error, refetch } = useIdeas({ tags: activeTags, q: query })
+  const { data: vocabulary } = useTags()
+
+  /** Adds or removes one tag from the filter, keeping the rest intact. */
+  const toggleTag = (slug: string) => {
+    const next = new URLSearchParams(searchParams)
+    const current = next.getAll('tag')
+    next.delete('tag')
+    for (const tag of current) {
+      if (tag !== slug) next.append('tag', tag)
+    }
+    if (!current.includes(slug)) next.append('tag', slug)
+    setSearchParams(next, { replace: true })
+  }
+
+  const setQuery = (value: string) => {
+    const next = new URLSearchParams(searchParams)
+    if (value) next.set('q', value)
+    else next.delete('q')
+    setSearchParams(next, { replace: true })
+  }
+
+  // Only tags actually in use are worth offering, plus any already-selected
+  // one, so a filter never silently disappears from the bar it was set in.
+  const offeredTags = (vocabulary ?? []).filter(
+    (tag) => tag.idea_count > 0 || activeTags.includes(tag.slug),
+  )
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-8">
@@ -22,6 +59,40 @@ export function IdeaListPage() {
         </Link>
       </header>
 
+      <div className="mb-6 flex flex-col gap-3">
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search titles…"
+          aria-label="Search ideas by title"
+          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500 dark:border-slate-700 dark:bg-slate-900"
+        />
+
+        {offeredTags.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {offeredTags.map((tag) => {
+              const active = activeTags.includes(tag.slug)
+              return (
+                <button key={tag.slug} type="button" onClick={() => toggleTag(tag.slug)}>
+                  <TagChip tag={tag} count={tag.idea_count} active={active} />
+                </button>
+              )
+            })}
+            {filtering ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-1"
+                onClick={() => setSearchParams(new URLSearchParams(), { replace: true })}
+              >
+                Clear
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
       {isPending ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[0, 1, 2].map((key) => (
@@ -35,20 +106,32 @@ export function IdeaListPage() {
           action={<Button onClick={() => void refetch()}>Try again</Button>}
         />
       ) : ideas.length === 0 ? (
-        <EmptyState
-          title="No ideas yet"
-          description="Everything starts with a rough note. Write the first one."
-          action={
-            <Link to="/ideas/new">
-              <Button variant="primary">New idea</Button>
-            </Link>
-          }
-        />
+        filtering ? (
+          <EmptyState
+            title="Nothing matches that filter"
+            description="Try a different tag, or clear the filter to see everything."
+            action={
+              <Button onClick={() => setSearchParams(new URLSearchParams(), { replace: true })}>
+                Clear filter
+              </Button>
+            }
+          />
+        ) : (
+          <EmptyState
+            title="No ideas yet"
+            description="Everything starts with a rough note. Write the first one."
+            action={
+              <Link to="/ideas/new">
+                <Button variant="primary">New idea</Button>
+              </Link>
+            }
+          />
+        )
       ) : (
         <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {ideas.map((idea) => (
             <li key={idea.id}>
-              <IdeaCard idea={idea} />
+              <IdeaCard idea={idea} activeTags={activeTags} />
             </li>
           ))}
         </ul>

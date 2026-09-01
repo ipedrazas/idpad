@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	"github.com/ipedrazas/idpad/api/internal/model"
 	"github.com/ipedrazas/idpad/api/internal/store"
 )
@@ -57,13 +59,54 @@ func (s *Server) handleCreateIdea(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, idea)
 }
 
+// handleListIdeas lists ideas, narrowed by the optional query parameters:
+//
+//	?tag=a&tag=b   only ideas carrying every listed tag
+//	?q=text        case-insensitive title substring
+//	?exclude=uuid  drop one idea, so the link picker never offers self-linking
 func (s *Server) handleListIdeas(w http.ResponseWriter, r *http.Request) {
-	ideas, err := s.store.ListIdeas(r.Context())
+	filter, err := parseIdeaFilter(r)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+
+	ideas, err := s.store.ListIdeas(r.Context(), filter)
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, ideas)
+}
+
+// parseIdeaFilter reads the list query parameters. Tag values are slugified so
+// ?tag=Machine%20Learning finds the same ideas as ?tag=machine-learning.
+func parseIdeaFilter(r *http.Request) (model.IdeaFilter, error) {
+	query := r.URL.Query()
+
+	var filter model.IdeaFilter
+	for _, raw := range query["tag"] {
+		slug := model.Slugify(raw)
+		if slug == "" {
+			return model.IdeaFilter{}, validationError("tag %q is not a usable tag name", raw)
+		}
+		filter.TagSlugs = append(filter.TagSlugs, slug)
+	}
+
+	filter.Query = strings.TrimSpace(query.Get("q"))
+	if utf8.RuneCountInString(filter.Query) > maxTitleLen {
+		return model.IdeaFilter{}, validationError("q must be at most %d characters", maxTitleLen)
+	}
+
+	if raw := strings.TrimSpace(query.Get("exclude")); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return model.IdeaFilter{}, validationError("exclude %q is not a valid UUID", raw)
+		}
+		filter.ExcludeID = id.String()
+	}
+
+	return filter, nil
 }
 
 func (s *Server) handleGetIdea(w http.ResponseWriter, r *http.Request) {

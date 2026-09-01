@@ -1,4 +1,18 @@
-import type { Anchor, Comment, CommentStatus, Doc, Idea, IdeaSummary, Resource, ResourceType, Thread } from './types'
+import type {
+  Anchor,
+  Comment,
+  CommentStatus,
+  Doc,
+  Idea,
+  IdeaSummary,
+  Link,
+  Relation,
+  Resource,
+  ResourceType,
+  Tag,
+  TagSummary,
+  Thread,
+} from './types'
 
 /**
  * Base URL for the API. Same-origin by default: vite proxies /api in dev and
@@ -95,9 +109,35 @@ export interface CreateResourceInput {
   label?: string
 }
 
+/** Narrows the idea list. Every field is optional; an empty filter lists all. */
+export interface IdeaFilter {
+  /** Only ideas carrying every listed tag slug, so stacking tags narrows. */
+  tags?: string[]
+  /** Case-insensitive title substring. */
+  q?: string
+  /** Drop one idea, so the link picker never offers a link to itself. */
+  exclude?: string
+}
+
+export interface CreateLinkInput {
+  target_idea_id: string
+  relation: Relation
+  note?: string
+}
+
+/** Serialises an idea filter into the list endpoint's query string. */
+function ideaQuery(filter: IdeaFilter = {}): string {
+  const params = new URLSearchParams()
+  for (const tag of filter.tags ?? []) params.append('tag', tag)
+  if (filter.q) params.set('q', filter.q)
+  if (filter.exclude) params.set('exclude', filter.exclude)
+  const query = params.toString()
+  return query ? `?${query}` : ''
+}
+
 /** The typed surface of the idpad API. */
 export const api = {
-  listIdeas: () => request<IdeaSummary[]>('/ideas'),
+  listIdeas: (filter?: IdeaFilter) => request<IdeaSummary[]>(`/ideas${ideaQuery(filter)}`),
 
   getIdea: (id: string) => request<Idea>(`/ideas/${id}`),
 
@@ -127,4 +167,19 @@ export const api = {
     request<Resource>(`/ideas/${ideaId}/resources`, { method: 'POST', ...json(input) }),
 
   deleteResource: (id: string) => request<void>(`/resources/${id}`, { method: 'DELETE' }),
+
+  listTags: () => request<TagSummary[]>('/tags'),
+
+  listIdeaTags: (ideaId: string) => request<Tag[]>(`/ideas/${ideaId}/tags`),
+
+  /** Replaces the idea's whole tag set; an empty list clears it. */
+  setIdeaTags: (ideaId: string, tags: string[]) =>
+    request<Tag[]>(`/ideas/${ideaId}/tags`, { method: 'PUT', ...json({ tags }) }),
+
+  listLinks: (ideaId: string) => request<Link[]>(`/ideas/${ideaId}/links`),
+
+  createLink: (ideaId: string, input: CreateLinkInput) =>
+    request<Link>(`/ideas/${ideaId}/links`, { method: 'POST', ...json(input) }),
+
+  deleteLink: (id: string) => request<void>(`/links/${id}`, { method: 'DELETE' }),
 }

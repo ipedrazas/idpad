@@ -7,6 +7,9 @@ attach images and links that stay with the idea.
 - **Ideas** — create, list, edit and delete notes with headings, lists, bold and italic.
 - **Comments** — anchor a thread to an exact text selection, reply, edit, resolve. Highlights are rendered over the anchored text and cycle through a colour palette.
 - **Resources** — attach image and link URLs, shown as thumbnails and cards.
+- **Tags** — a shared vocabulary rather than free text: spellings fold onto one slug, so "Machine Learning" and "machine-learning" are the same tag. Filter the list by one tag or stack several to narrow.
+- **Connections** — link ideas with a typed relation (`references`, `expands`, `similar`, `related`). A link is stored once and shown from both ends, phrased from whichever idea you are reading.
+- **Theme** — light, dark, or follow the system, chosen from the nav bar and remembered.
 
 **Stack:** React 19 + TypeScript + Vite + Tailwind 4 + TipTap 3 · Go 1.25 (chi, pgx, golang-migrate, `log/slog`) · PostgreSQL 16.
 
@@ -113,7 +116,7 @@ request breaks a domain rule.
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/api/v1/ideas` | create an idea |
-| `GET` | `/api/v1/ideas` | list ideas with `comment_count` and `resource_count` |
+| `GET` | `/api/v1/ideas` | list ideas with counts and tags; filter with `?tag=`, `?q=`, `?exclude=` |
 | `GET` | `/api/v1/ideas/{id}` | fetch an idea |
 | `PUT` | `/api/v1/ideas/{id}` | replace title and body |
 | `DELETE` | `/api/v1/ideas/{id}` | delete an idea and everything on it |
@@ -125,6 +128,17 @@ request breaks a domain rule.
 | `GET` | `/api/v1/ideas/{id}/resources` | list resources |
 | `POST` | `/api/v1/ideas/{id}/resources` | attach an image or link |
 | `DELETE` | `/api/v1/resources/{id}` | remove a resource |
+| `GET` | `/api/v1/tags` | the tag vocabulary with `idea_count` |
+| `DELETE` | `/api/v1/tags/unused` | drop tags no idea carries |
+| `GET` | `/api/v1/ideas/{id}/tags` | an idea's tags |
+| `PUT` | `/api/v1/ideas/{id}/tags` | replace an idea's whole tag set |
+| `GET` | `/api/v1/ideas/{id}/links` | connections in both directions |
+| `POST` | `/api/v1/ideas/{id}/links` | connect this idea to another |
+| `DELETE` | `/api/v1/links/{id}` | remove a connection (from either end) |
+
+The list endpoint's `tag` parameter may be repeated, and stacking narrows:
+`?tag=go&tag=postgres` returns only ideas carrying both. Values are slugified,
+so `?tag=Machine%20Learning` and `?tag=machine-learning` are the same filter.
 
 ### Walkthrough with curl
 
@@ -189,6 +203,45 @@ curl -sX PUT localhost:8080/api/v1/ideas/$IDEA \
 curl -s localhost:8080/api/v1/ideas/$IDEA/comments | jq '.data[] | {body, detached}'
 ```
 
+Tag it, then watch two spellings fold onto one tag:
+
+```bash
+curl -sX PUT localhost:8080/api/v1/ideas/$IDEA/tags \
+  -H 'Content-Type: application/json' \
+  -d '{"tags":["Product","Machine Learning"]}' | jq '.data[].slug'
+
+OTHER=$(curl -sX POST localhost:8080/api/v1/ideas \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Embedding search"}' | jq -r .data.id)
+
+curl -sX PUT localhost:8080/api/v1/ideas/$OTHER/tags \
+  -H 'Content-Type: application/json' \
+  -d '{"tags":["machine-learning"]}' > /dev/null
+
+# One tag, carried by two ideas — not two tags.
+curl -s localhost:8080/api/v1/tags | jq '.data[] | {slug, name, idea_count}'
+
+# Stacking tags narrows the list.
+curl -s 'localhost:8080/api/v1/ideas?tag=machine-learning&tag=product' | jq '.data[].title'
+```
+
+Connect the two ideas, and read the link from each end:
+
+```bash
+curl -sX POST localhost:8080/api/v1/ideas/$OTHER/links \
+  -H 'Content-Type: application/json' \
+  -d "{\"target_idea_id\":\"$IDEA\",\"relation\":\"expands\",
+       \"note\":\"takes the notebook idea further\"}" > /dev/null
+
+# The source declared it: "expands -> A notebook that comments back"
+curl -s localhost:8080/api/v1/ideas/$OTHER/links \
+  | jq '.data[] | {direction, relation, other_title}'
+
+# The target sees the same row from the other side, as incoming.
+curl -s localhost:8080/api/v1/ideas/$IDEA/links \
+  | jq '.data[] | {direction, relation, other_title}'
+```
+
 ---
 
 ## Testing
@@ -196,7 +249,7 @@ curl -s localhost:8080/api/v1/ideas/$IDEA/comments | jq '.data[] | {body, detach
 ```bash
 task test          # everything
 task test:api      # Go: unit tests plus testcontainers integration tests
-task test:web      # Vitest: anchor logic and a component test
+task test:web      # Vitest: anchor, slug and relation logic, plus component tests
 ```
 
 The Go integration tests start a real `postgres:16-alpine` through
@@ -277,6 +330,55 @@ tested without mounting an editor at all.
   keystroke, and flushes pending edits before creating a comment so the server
   is always anchoring against text it can see.
 
+### Tags are a vocabulary, not strings
+
+Tags live in their own table keyed by a `slug` — lower-cased, accent-stripped,
+with punctuation runs collapsed to hyphens — while `name` keeps the spelling
+someone typed. Writing "Machine Learning" on one idea and "machine-learning" on
+another therefore produces one tag carried by two ideas, not two tags. That is
+what makes the tag index, the usage counts and the filter meaningful.
+
+The rule is implemented twice: `model.Slugify` in Go is authoritative, and
+`web/src/lib/slug.ts` mirrors it so the chip editor can recognise a duplicate
+without a round trip. Both are tested against the same table of cases, and the
+server's response is always what gets rendered.
+
+`PUT /ideas/{id}/tags` replaces the whole set rather than adding one, which is
+the shape a chip editor naturally produces — and sending `[]` is how the last
+tag is removed. Tags outlive the ideas that used them (deleting an idea leaves
+the vocabulary intact); `DELETE /tags/unused` is the deliberate cleanup.
+
+### Links are stored once and read from both ends
+
+A connection is one row, directed `source → target`, with a relation. The idea
+that declared it reads the active phrasing, and the idea at the other end reads
+the passive one: "references" on one page is "referenced by" on the other. The
+two symmetric relations — `similar`, `related` — are their own inverse and read
+identically either way, so they get a two-headed arrow rather than a direction
+they do not carry.
+
+Storing one row rather than two is what keeps the ends from disagreeing: there
+is no second row to fall out of step, either end can delete the link, and
+`on delete cascade` on both foreign keys means an idea's removal takes its
+connections with it. Rendering the inverse is entirely the client's job
+(`web/src/lib/relations.ts`); the API only ever stores and returns the four
+real relations, and rejects an inverse like `referenced_by` as a relation to
+write.
+
+### The theme is resolved in JS, not by a media query
+
+Dark mode is driven only by a `dark` class on `<html>`. The OS preference is
+deliberately *not* part of Tailwind's `dark` variant, because a variant that
+also matched `prefers-color-scheme: dark` would override an explicit choice of
+light on a dark-themed machine — the one case a theme toggle exists for.
+
+So `system` is resolved once, in JS, and the result is written to the class.
+An inline script in `index.html` applies the stored preference before the first
+paint, which is what stops a dark-theme reload flashing white; it mirrors
+`resolveTheme`/`applyTheme` in `web/src/theme/theme.ts`, and the two have to be
+changed together. Choosing `system` keeps following the OS live through a
+`matchMedia` listener, rather than resolving once at load.
+
 ### No authentication (yet)
 
 v1 is single-user: there is no login, and comments render with a placeholder
@@ -300,9 +402,10 @@ api/                  Go REST API
   migrations/         numbered SQL migrations, embedded in the binary
 web/                  React SPA
   src/api/            typed fetch client and wire types
-  src/lib/            anchor math and formatting — pure, unit tested
+  src/lib/            anchor math, slugs, relation phrasing — pure, unit tested
   src/hooks/          TanStack Query hooks with optimistic updates
-  src/components/     editor, highlight plugin, sidebar, resources
+  src/components/     editor, highlight plugin, sidebar, resources, tags, links
+  src/theme/          theme preference, resolution and provider
 scripts/create-db.sh  role + database bootstrap for an existing server
 compose.yaml          local stack (builds from source)
 compose.prod.yaml     the same stack from images on GHCR

@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router-dom'
 
 import { ApiError } from './api/client'
 import { App } from './App'
+import { ThemeProvider } from './theme/ThemeProvider'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -29,10 +30,12 @@ if (!container) {
 
 createRoot(container).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ThemeProvider>
   </StrictMode>,
 )
