@@ -42,6 +42,16 @@ export interface Tag {
   created_at: string
 }
 
+/**
+ * Optional capabilities this deployment has. They depend on server
+ * configuration, so the UI asks rather than assuming, and hides what is off
+ * instead of offering a control that cannot work.
+ */
+export interface Features {
+  /** Whether a tagging service is configured for the "Suggest tags" button. */
+  auto_tagging: boolean
+}
+
 /** A tag in the global index, with how many ideas currently carry it. */
 export interface TagSummary extends Tag {
   idea_count: number

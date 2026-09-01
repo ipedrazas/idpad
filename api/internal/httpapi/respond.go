@@ -19,6 +19,11 @@ const (
 	codeUnprocessable = "unprocessable"
 	codeInternal      = "internal_error"
 	codeBadRequest    = "bad_request"
+	// codeUpstream marks a failure in a service this API depends on, as
+	// distinct from a fault in the request or in this server.
+	codeUpstream = "upstream_error"
+	// codeUnavailable marks a capability this deployment is not configured for.
+	codeUnavailable = "unavailable"
 )
 
 // envelope is the success shape: {"data": ...}.

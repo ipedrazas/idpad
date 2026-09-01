@@ -65,13 +65,26 @@ func run() error {
 	}
 	defer pool.Close()
 
+	// A response must be allowed to outlast the slowest handler. Automatic
+	// tagging waits on an external service, so the write timeout is derived
+	// from its budget rather than fixed, or a cold start upstream would be cut
+	// off by this server rather than by the timeout configured for it.
+	writeTimeout := 60 * time.Second
+	if budget := cfg.TaggerTimeout + 15*time.Second; budget > writeTimeout {
+		writeTimeout = budget
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           httpapi.NewServer(store.New(pool), log, cfg).Router(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       90 * time.Second,
+	}
+
+	if cfg.AutoTaggingEnabled() {
+		log.Info("automatic tagging enabled", "url", cfg.TaggerURL, "timeout", cfg.TaggerTimeout)
 	}
 
 	serveErr := make(chan error, 1)
