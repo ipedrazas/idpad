@@ -35,7 +35,11 @@ func (s *Server) Router() http.Handler {
 	r.Use(requestLogger(s.log))
 	r.Use(middleware.Recoverer)
 	r.Use(cors(s.cfg))
-	r.Use(middleware.Timeout(s.cfg.RequestTimeout))
+	// A zero timeout would hand every handler an already-expired context, so
+	// treat it as "no deadline" rather than "no time at all".
+	if s.cfg.RequestTimeout > 0 {
+		r.Use(middleware.Timeout(s.cfg.RequestTimeout))
+	}
 
 	r.Get("/healthz", s.handleHealth)
 

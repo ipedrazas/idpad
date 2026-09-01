@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -46,7 +47,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	testDB.Reset(t)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	cfg := config.Config{CORSOrigins: []string{"*"}, RequestTimeout: 0}
+	cfg := config.Config{CORSOrigins: []string{"*"}, RequestTimeout: 30 * time.Second}
 	srv := httptest.NewServer(httpapi.NewServer(store.New(testDB.Pool), log, cfg).Router())
 	t.Cleanup(srv.Close)
 	return srv
