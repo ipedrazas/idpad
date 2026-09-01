@@ -30,3 +30,14 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Node / frontend
+node_modules/
+web/dist/
+web/coverage/
+
+# Air hot-reload build output
+api/tmp/
+
+# Local environment
+.env

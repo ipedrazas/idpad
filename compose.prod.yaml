@@ -1,0 +1,58 @@
+# The same stack, but running the images CI published to GHCR instead of
+# building locally. Use with: docker compose -f compose.prod.yaml up -d
+name: idpad
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-idpad}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-idpad}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-idpad} -d ${POSTGRES_DB:-idpad}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  api:
+    image: ghcr.io/ipedrazas/idpad/idpad-api:${IMAGE_TAG:-latest}
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-idpad}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-idpad}?sslmode=disable
+      IDPAD_ADDR: ":8080"
+      IDPAD_LOG_LEVEL: ${IDPAD_LOG_LEVEL:-info}
+      IDPAD_LOG_FORMAT: ${IDPAD_LOG_FORMAT:-json}
+      IDPAD_CORS_ORIGINS: ${IDPAD_CORS_ORIGINS:-*}
+      IDPAD_MIGRATE_ON_START: ${IDPAD_MIGRATE_ON_START:-true}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/server", "-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  web:
+    image: ghcr.io/ipedrazas/idpad/idpad-web:${IMAGE_TAG:-latest}
+    ports:
+      - "${WEB_PORT:-5173}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -1,0 +1,212 @@
+version: '3'
+
+# Every task assumes it is run from the repository root. `.env` is optional:
+# the compose files carry sensible defaults for local development.
+dotenv: ['.env']
+
+vars:
+  REGISTRY: ghcr.io
+  IMAGE_API: ghcr.io/ipedrazas/idpad/idpad-api
+  IMAGE_WEB: ghcr.io/ipedrazas/idpad/idpad-web
+  IMAGE_TAG: '{{.IMAGE_TAG | default "latest"}}'
+  # Used by the migrate CLI and the dev API, which both run on the host.
+  LOCAL_DATABASE_URL: '{{.LOCAL_DATABASE_URL | default "postgres://idpad:idpad@localhost:5432/idpad?sslmode=disable"}}'
+  MIGRATE_IMAGE: migrate/migrate:v4.19.0
+
+tasks:
+  default:
+    desc: List the available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  up:
+    desc: Start the full stack (postgres + api + web) in the background
+    cmds:
+      - docker compose up --build -d
+      - echo "web  → http://localhost:${WEB_PORT:-5173}"
+      - echo "api  → http://localhost:${API_PORT:-8080}/api/v1/ideas"
+
+  down:
+    desc: Stop the stack, keeping the database volume
+    cmds:
+      - docker compose down
+
+  clean:
+    desc: Stop the stack and delete the database volume
+    prompt: This deletes every idea in the local database. Continue?
+    cmds:
+      - docker compose down --volumes
+
+  logs:
+    desc: Follow the logs of every service (use SERVICE=api to narrow)
+    cmds:
+      - docker compose logs -f --tail 100 {{.SERVICE}}
+
+  ps:
+    desc: Show the status of the stack
+    cmds:
+      - docker compose ps
+
+  db:
+    desc: Start only Postgres, for running the API and web on the host
+    cmds:
+      - docker compose up -d db
+
+  dev:
+    desc: Run the API (hot reload via air) and the web dev server against a local Postgres
+    deps: [db]
+    cmds:
+      - task: dev:parallel
+
+  dev:parallel:
+    internal: true
+    deps: [dev:api, dev:web]
+
+  dev:api:
+    desc: Run the API with hot reload (installs air on first use)
+    dir: api
+    env:
+      DATABASE_URL: '{{.LOCAL_DATABASE_URL}}'
+      IDPAD_LOG_FORMAT: text
+      IDPAD_LOG_LEVEL: debug
+    cmds:
+      - command -v air >/dev/null 2>&1 || go install github.com/air-verse/air@latest
+      - air
+
+  dev:web:
+    desc: Run the Vite dev server on http://localhost:5173
+    dir: web
+    cmds:
+      - npm install --no-audit --no-fund
+      - npm run dev
+
+  db-create:
+    desc: Create the idpad role and database on a Postgres you already run
+    cmds:
+      - '{{.TASKFILE_DIR}}/scripts/create-db.sh {{.CLI_ARGS}}'
+
+  db-drop:
+    desc: Drop the idpad role and database (asks for confirmation)
+    cmds:
+      - '{{.TASKFILE_DIR}}/scripts/create-db.sh --drop {{.CLI_ARGS}}'
+
+  db-reset:
+    desc: Drop, recreate and migrate the database
+    prompt: This deletes every idea in {{.LOCAL_DATABASE_URL}}. Continue?
+    cmds:
+      - '{{.TASKFILE_DIR}}/scripts/create-db.sh --drop --force'
+      - '{{.TASKFILE_DIR}}/scripts/create-db.sh'
+      - task: migrate
+
+  migrate:
+    desc: Apply all pending migrations to the local database
+    cmds:
+      - task: migrate-run
+        vars: {MIGRATE_ARGS: up}
+
+  migrate-down:
+    desc: Roll back the most recent migration
+    cmds:
+      - task: migrate-run
+        vars: {MIGRATE_ARGS: down 1}
+
+  migrate-run:
+    internal: true
+    cmds:
+      - |
+        # The migrate CLI runs in a container, which cannot reach the host
+        # through "localhost". host.docker.internal resolves on Docker Desktop
+        # and --add-host supplies it on Linux.
+        url=$(printf '%s' '{{.LOCAL_DATABASE_URL}}' \
+          | sed -e 's/@localhost:/@host.docker.internal:/' \
+                -e 's/@127\.0\.0\.1:/@host.docker.internal:/')
+        docker run --rm \
+          --add-host=host.docker.internal:host-gateway \
+          -v "{{.TASKFILE_DIR}}/api/migrations:/migrations" \
+          {{.MIGRATE_IMAGE}} \
+          -path=/migrations -database "$url" {{.MIGRATE_ARGS}}
+
+  migrate-new:
+    desc: Create a new migration pair (NAME=add_something)
+    requires:
+      vars: [NAME]
+    cmds:
+      - >-
+        docker run --rm
+        -v "{{.TASKFILE_DIR}}/api/migrations:/migrations"
+        {{.MIGRATE_IMAGE}}
+        create -ext sql -dir /migrations -seq {{.NAME}}
+
+  test:
+    desc: Run all tests (Go unit + testcontainers integration, plus the web suite)
+    deps: [test:api, test:web]
+
+  test:api:
+    desc: Run the backend tests; the integration suite starts Postgres via testcontainers
+    dir: api
+    cmds:
+      - go test ./...
+
+  test:web:
+    desc: Run the frontend unit and component tests
+    dir: web
+    cmds:
+      - npm ci --no-audit --no-fund
+      - npm run test
+
+  lint:
+    desc: Lint and typecheck both halves of the repo
+    deps: [lint:api, lint:web]
+
+  lint:api:
+    desc: go vet plus golangci-lint
+    dir: api
+    cmds:
+      - go vet ./...
+      - test -z "$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
+      - >-
+        command -v golangci-lint >/dev/null 2>&1
+        && golangci-lint run
+        || echo "golangci-lint not installed; skipping (see https://golangci-lint.run/welcome/install/)"
+
+  lint:web:
+    desc: eslint plus tsc --noEmit
+    dir: web
+    cmds:
+      - npm ci --no-audit --no-fund
+      - npm run typecheck
+      - npm run lint
+
+  build:
+    desc: Build both container images locally
+    deps: [build:api, build:web]
+
+  build:api:
+    desc: Build the API image
+    cmds:
+      - docker build -t {{.IMAGE_API}}:{{.IMAGE_TAG}} ./api
+
+  build:web:
+    desc: Build the web image
+    cmds:
+      - docker build -t {{.IMAGE_WEB}}:{{.IMAGE_TAG}} ./web
+
+  push:
+    desc: Push both images to GHCR (run `task login` first)
+    deps: [build]
+    cmds:
+      - docker push {{.IMAGE_API}}:{{.IMAGE_TAG}}
+      - docker push {{.IMAGE_WEB}}:{{.IMAGE_TAG}}
+
+  login:
+    desc: Log in to GHCR with a token from $GITHUB_TOKEN
+    requires:
+      vars: [GITHUB_TOKEN]
+    cmds:
+      - echo "$GITHUB_TOKEN" | docker login {{.REGISTRY}} -u {{.GITHUB_ACTOR | default "ipedrazas"}} --password-stdin
+
+  prod:
+    desc: Run the stack from the images published to GHCR
+    cmds:
+      - docker compose -f compose.prod.yaml up -d
