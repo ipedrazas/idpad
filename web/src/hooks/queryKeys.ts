@@ -18,6 +18,7 @@ export const queryKeys = {
   ideaTags: (ideaId: string) => ['ideas', ideaId, 'tags'] as const,
   links: (ideaId: string) => ['ideas', ideaId, 'links'] as const,
   tags: ['tags'] as const,
+  features: ['features'] as const,
 }
 
 /**

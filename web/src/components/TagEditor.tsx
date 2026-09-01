@@ -3,7 +3,7 @@ import { useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import type { Tag, TagSummary } from '../api/types'
 import { cx } from '../lib/format'
 import { slugify } from '../lib/slug'
-import { FieldError, Skeleton, Spinner } from './ui'
+import { Button, FieldError, Skeleton, Spinner } from './ui'
 import { TagChip } from './TagChip'
 
 /** Mirrors the API's per-idea cap, so the limit is felt before the request. */
@@ -17,6 +17,11 @@ export interface TagEditorProps {
   error: Error | null
   /** Persists the full replacement set. */
   onChange: (names: string[]) => Promise<void>
+  /**
+   * Asks the server to read the idea and merge in suggested tags. Omitted when
+   * the deployment has no tagging service, in which case no button is shown.
+   */
+  onSuggest?: () => Promise<void>
 }
 
 /**
@@ -24,9 +29,10 @@ export interface TagEditorProps {
  * change, matching the API's PUT semantics, and shows what the server stored
  * rather than what was typed — the server folds spellings onto existing tags.
  */
-export function TagEditor({ tags, vocabulary, loading, error, onChange }: TagEditorProps) {
+export function TagEditor({ tags, vocabulary, loading, error, onChange, onSuggest }: TagEditorProps) {
   const [draft, setDraft] = useState('')
   const [saving, setSaving] = useState(false)
+  const [suggesting, setSuggesting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -79,6 +85,19 @@ export function TagEditor({ tags, vocabulary, loading, error, onChange }: TagEdi
     await commit(tags.filter((tag) => tag.slug !== slug).map((tag) => tag.name))
   }
 
+  const suggest = async () => {
+    if (!onSuggest) return
+    setSuggesting(true)
+    setFormError(null)
+    try {
+      await onSuggest()
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : 'Could not reach the tagging service.')
+    } finally {
+      setSuggesting(false)
+    }
+  }
+
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     // Enter and comma both commit, because both are how people end a tag.
     if (event.key === 'Enter' || event.key === ',') {
@@ -95,9 +114,24 @@ export function TagEditor({ tags, vocabulary, loading, error, onChange }: TagEdi
 
   return (
     <section aria-label="Tags" className="flex flex-col gap-2">
-      <header className="flex items-baseline justify-between">
+      <header className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold tracking-tight text-slate-900 dark:text-slate-100">Tags</h2>
-        {saving ? <Spinner className="size-3 text-slate-400" /> : null}
+        <div className="flex items-center gap-2">
+          {saving ? <Spinner className="size-3 text-slate-400" /> : null}
+          {onSuggest ? (
+            <Button
+              size="sm"
+              disabled={suggesting || saving}
+              onClick={() => void suggest()}
+              // The service can take tens of seconds on a cold start, so the
+              // button says what it is doing rather than just going quiet.
+              title="Read this idea and suggest tags"
+            >
+              {suggesting ? <Spinner className="size-3" /> : <span aria-hidden="true">✨</span>}
+              {suggesting ? 'Reading the idea…' : 'Suggest tags'}
+            </Button>
+          ) : null}
+        </div>
       </header>
 
       {loading ? (

@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -30,7 +31,19 @@ type Config struct {
 	ShutdownTimeout time.Duration
 	// RequestTimeout bounds a single request's handler.
 	RequestTimeout time.Duration
+	// TaggerURL is the full URL of the tagging service's endpoint, e.g.
+	// https://tagger.example.com/tag. Empty disables automatic tagging, and
+	// the UI hides the button rather than offering one that cannot work.
+	TaggerURL string
+	// TaggerTimeout bounds one call to the tagging service. It is generous by
+	// default because the service is noticeably slower on a cold start than
+	// when warm, and a suggestion that arrives late still beats a spurious
+	// failure.
+	TaggerTimeout time.Duration
 }
+
+// AutoTaggingEnabled reports whether a tagging service is configured.
+func (c Config) AutoTaggingEnabled() bool { return c.TaggerURL != "" }
 
 // Load reads the configuration from the process environment, applying
 // defaults suited to local development.
@@ -42,11 +55,30 @@ func Load() (Config, error) {
 		CORSOrigins:     splitAndTrim(env("IDPAD_CORS_ORIGINS", "*")),
 		ShutdownTimeout: 15 * time.Second,
 		RequestTimeout:  30 * time.Second,
+		TaggerURL:       env("IDPAD_TAGGER_URL", ""),
 	}
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
 	}
+
+	if cfg.TaggerURL != "" {
+		if err := validateTaggerURL(cfg.TaggerURL); err != nil {
+			return Config{}, fmt.Errorf("IDPAD_TAGGER_URL: %w", err)
+		}
+	}
+
+	taggerTimeout, err := time.ParseDuration(env("IDPAD_TAGGER_TIMEOUT", "45s"))
+	if err != nil {
+		return Config{}, fmt.Errorf("IDPAD_TAGGER_TIMEOUT: invalid duration %q", env("IDPAD_TAGGER_TIMEOUT", ""))
+	}
+	// The upper bound keeps the budget under the server's write timeout, which
+	// is derived from it; the lower bound rejects a value that could never
+	// complete a call.
+	if taggerTimeout < time.Second || taggerTimeout > 2*time.Minute {
+		return Config{}, fmt.Errorf("IDPAD_TAGGER_TIMEOUT must be between 1s and 2m, got %s", taggerTimeout)
+	}
+	cfg.TaggerTimeout = taggerTimeout
 
 	level, err := parseLevel(env("IDPAD_LOG_LEVEL", "info"))
 	if err != nil {
@@ -85,6 +117,22 @@ func (c Config) AllowsAnyOrigin() bool {
 		}
 	}
 	return false
+}
+
+// validateTaggerURL rejects a misconfigured tagger endpoint at boot rather
+// than on the first request. Only absolute http(s) URLs can be called.
+func validateTaggerURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("not a valid URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("must start with http:// or https://")
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("must include a host")
+	}
+	return nil
 }
 
 func env(key, fallback string) string {

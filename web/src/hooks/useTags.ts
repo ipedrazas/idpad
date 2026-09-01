@@ -39,3 +39,21 @@ export function useSetIdeaTags(ideaId: string) {
     },
   })
 }
+
+/**
+ * Sends the idea to the tagging service and merges the suggestions into its
+ * tags. The response is the full resulting set, so it replaces the cache entry
+ * outright rather than being merged again on the client.
+ */
+export function useAutoTagIdea(ideaId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => api.autoTagIdea(ideaId),
+    onSuccess: (tags) => {
+      queryClient.setQueryData(queryKeys.ideaTags(ideaId), tags)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.ideas })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tags })
+    },
+  })
+}

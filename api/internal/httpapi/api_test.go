@@ -136,6 +136,40 @@ func errorCode(t *testing.T, srv *httptest.Server, method, path string, payload 
 	return res.StatusCode, env.Error.Code
 }
 
+// errorBodyOf is errorCode plus the human-readable message, for the cases
+// that assert on what a message does or does not reveal.
+func errorBodyOf(t *testing.T, srv *httptest.Server, method, path string, payload any) (int, string, string) {
+	t.Helper()
+
+	var reader io.Reader
+	if payload != nil {
+		encoded, err := json.Marshal(payload)
+		require.NoError(t, err)
+		reader = bytes.NewReader(encoded)
+	}
+
+	req, err := http.NewRequestWithContext(t.Context(), method, srv.URL+path, reader)
+	require.NoError(t, err)
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	res, err := srv.Client().Do(req)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, res.Body.Close()) }()
+
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	raw, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &env), "response body: %s", raw)
+	return res.StatusCode, env.Error.Code, env.Error.Message
+}
+
 // createIdea is the fixture most tests start from.
 func createIdea(t *testing.T, srv *httptest.Server, title string, body json.RawMessage) model.Idea {
 	t.Helper()

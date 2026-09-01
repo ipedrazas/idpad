@@ -3,6 +3,7 @@ import type {
   Comment,
   CommentStatus,
   Doc,
+  Features,
   Idea,
   IdeaSummary,
   Link,
@@ -182,4 +183,13 @@ export const api = {
     request<Link>(`/ideas/${ideaId}/links`, { method: 'POST', ...json(input) }),
 
   deleteLink: (id: string) => request<void>(`/links/${id}`, { method: 'DELETE' }),
+
+  listFeatures: () => request<Features>('/features'),
+
+  /**
+   * Asks the tagging service to read the idea and merges what it suggests into
+   * the idea's existing tags. Returns the resulting set, as the tag endpoints do.
+   */
+  autoTagIdea: (ideaId: string) =>
+    request<Tag[]>(`/ideas/${ideaId}/tags/auto`, { method: 'POST' }),
 }

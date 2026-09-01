@@ -9,6 +9,7 @@ attach images and links that stay with the idea.
 - **Resources** — attach image and link URLs, shown as thumbnails and cards.
 - **Tags** — a shared vocabulary rather than free text: spellings fold onto one slug, so "Machine Learning" and "machine-learning" are the same tag. Filter the list by one tag or stack several to narrow.
 - **Connections** — link ideas with a typed relation (`references`, `expands`, `similar`, `related`). A link is stored once and shown from both ends, phrased from whichever idea you are reading.
+- **Suggested tags** — one button sends the idea to a tagging service and merges what it suggests into the existing tags. Optional: without `IDPAD_TAGGER_URL` the button is not shown.
 - **Theme** — light, dark, or follow the system, chosen from the nav bar and remembered.
 
 **Stack:** React 19 + TypeScript + Vite + Tailwind 4 + TipTap 3 · Go 1.25 (chi, pgx, golang-migrate, `log/slog`) · PostgreSQL 16.
@@ -55,6 +56,8 @@ development and in production alike.
 | `IDPAD_LOG_FORMAT` | `json` | `json` or `text` |
 | `IDPAD_CORS_ORIGINS` | `*` | comma-separated origins, or `*` |
 | `IDPAD_MIGRATE_ON_START` | `true` | apply pending migrations on boot |
+| `IDPAD_TAGGER_URL` | — (off) | full URL of the tagging service endpoint |
+| `IDPAD_TAGGER_TIMEOUT` | `45s` | budget for one call to that service (1s–2m) |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `idpad` | database credentials |
 | `API_PORT` / `WEB_PORT` / `POSTGRES_PORT` | `8080` / `5173` / `5432` | published host ports |
 
@@ -135,6 +138,8 @@ request breaks a domain rule.
 | `GET` | `/api/v1/ideas/{id}/links` | connections in both directions |
 | `POST` | `/api/v1/ideas/{id}/links` | connect this idea to another |
 | `DELETE` | `/api/v1/links/{id}` | remove a connection (from either end) |
+| `POST` | `/api/v1/ideas/{id}/tags/auto` | suggest tags for the idea and merge them in |
+| `GET` | `/api/v1/features` | which optional capabilities this server has |
 
 The list endpoint's `tag` parameter may be repeated, and stacking narrows:
 `?tag=go&tag=postgres` returns only ideas carrying both. Values are slugified,
@@ -223,6 +228,16 @@ curl -s localhost:8080/api/v1/tags | jq '.data[] | {slug, name, idea_count}'
 
 # Stacking tags narrows the list.
 curl -s 'localhost:8080/api/v1/ideas?tag=machine-learning&tag=product' | jq '.data[].title'
+```
+
+Ask the tagging service to suggest tags, if one is configured:
+
+```bash
+# Merged into whatever the idea already carries, never replacing it.
+curl -sX POST localhost:8080/api/v1/ideas/$IDEA/tags/auto | jq '.data[].name'
+
+# Whether the button is available at all.
+curl -s localhost:8080/api/v1/features | jq .data
 ```
 
 Connect the two ideas, and read the link from each end:
@@ -365,6 +380,40 @@ connections with it. Rendering the inverse is entirely the client's job
 real relations, and rejects an inverse like `referenced_by` as a relation to
 write.
 
+### Suggested tags merge, and the service is never trusted blindly
+
+`POST /ideas/{id}/tags/auto` flattens the idea — title first, then the body's
+blocks — and posts `{"text": …}` to the service named by `IDPAD_TAGGER_URL`,
+expecting `{"tags": [...]}` back. It **merges** what comes back into the idea's
+existing tags rather than replacing them: a suggestion should never silently
+discard a tag someone chose by hand, and an unwanted one is a single click to
+remove. Existing names come first, so a suggestion can never displace the
+spelling already in use.
+
+The service is not bound by this API's tag rules, so each suggestion is judged
+on its own — one unusable name is skipped rather than costing the good ones
+alongside it — and the whole merged set still goes through the same validation
+and slug-folding as a hand-typed tag. Suggestions that fold onto a tag the idea
+already carries are dropped.
+
+The call is proxied through the API rather than made from the browser: the
+service's location stays server-side, there is no CORS round trip, and an
+upstream failure is logged with its cause but reported to the client as a plain
+502 — the upstream's status and body are never echoed back.
+
+Two timeouts matter here. The service is much slower on a cold start (tens of
+seconds) than when warm (a second or two), well past the global 30 s request
+timeout, so this handler runs on its own `IDPAD_TAGGER_TIMEOUT` budget rather
+than the shared one. Detaching also means a caller who navigates away still
+gets the tags written, which is the useful outcome rather than wasted work. The
+server's write timeout is derived from that budget, so raising one cannot leave
+the other cutting the response off.
+
+Because the endpoint is optional, `GET /features` reports whether it is
+configured and the UI hides the button when it is not, rather than offering one
+that always fails. Note that the service is not deterministic: pressing the
+button twice can add tags the first pass did not return.
+
 ### The theme is resolved in JS, not by a media query
 
 Dark mode is driven only by a `dark` class on `<html>`. The OS preference is
@@ -397,6 +446,7 @@ api/                  Go REST API
   internal/config/    environment-based configuration
   internal/model/     domain types and the pure anchor logic
   internal/store/     pgx repository layer, connection and migration helpers
+  internal/tagger/    client for the optional external tagging service
   internal/httpapi/   router, middleware, handlers, JSON envelopes
   internal/testutil/  testcontainers Postgres helper
   migrations/         numbered SQL migrations, embedded in the binary

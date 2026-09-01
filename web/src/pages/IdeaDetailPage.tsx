@@ -18,7 +18,8 @@ import {
 import { useDeleteIdea, useIdea, useIdeas, useUpdateIdea } from '../hooks/useIdeas'
 import { useCreateLink, useDeleteLink, useLinks } from '../hooks/useLinks'
 import { useCreateResource, useDeleteResource, useResources } from '../hooks/useResources'
-import { useIdeaTags, useSetIdeaTags, useTags } from '../hooks/useTags'
+import { useFeatures } from '../hooks/useFeatures'
+import { useAutoTagIdea, useIdeaTags, useSetIdeaTags, useTags } from '../hooks/useTags'
 import { anchorMatchesDoc } from '../lib/anchor'
 import { absoluteTime, relativeTime } from '../lib/format'
 
@@ -37,6 +38,7 @@ export function IdeaDetailPage() {
   const tagsQuery = useIdeaTags(id)
   const vocabularyQuery = useTags()
   const linksQuery = useLinks(id)
+  const featuresQuery = useFeatures()
 
   const ideaId = id ?? ''
   const updateIdea = useUpdateIdea(ideaId)
@@ -48,6 +50,7 @@ export function IdeaDetailPage() {
   const createResource = useCreateResource(ideaId)
   const deleteResource = useDeleteResource(ideaId)
   const setIdeaTags = useSetIdeaTags(ideaId)
+  const autoTagIdea = useAutoTagIdea(ideaId)
   const createLink = useCreateLink(ideaId)
   const deleteLink = useDeleteLink(ideaId)
 
@@ -222,6 +225,19 @@ export function IdeaDetailPage() {
           onChange={async (names) => {
             await setIdeaTags.mutateAsync(names)
           }}
+          onSuggest={
+            featuresQuery.data?.auto_tagging
+              ? async () => {
+                  // The service reads what the server has stored, so any
+                  // pending edit is flushed first — exactly as starting a
+                  // comment does.
+                  if (body && lastSaved.current && lastSaved.current.body !== JSON.stringify(body)) {
+                    await save(title.trim() || 'Untitled', body)
+                  }
+                  await autoTagIdea.mutateAsync()
+                }
+              : undefined
+          }
         />
       </div>
 

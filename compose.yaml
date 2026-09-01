@@ -29,6 +29,9 @@ services:
       IDPAD_LOG_FORMAT: ${IDPAD_LOG_FORMAT:-json}
       IDPAD_CORS_ORIGINS: ${IDPAD_CORS_ORIGINS:-*}
       IDPAD_MIGRATE_ON_START: ${IDPAD_MIGRATE_ON_START:-true}
+      # Unset by default: no tagging service, and the UI hides the button.
+      IDPAD_TAGGER_URL: ${IDPAD_TAGGER_URL:-}
+      IDPAD_TAGGER_TIMEOUT: ${IDPAD_TAGGER_TIMEOUT:-45s}
     ports:
       - "${API_PORT:-8080}:8080"
     depends_on:

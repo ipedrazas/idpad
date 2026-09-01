@@ -10,19 +10,28 @@ import (
 
 	"github.com/ipedrazas/idpad/api/internal/config"
 	"github.com/ipedrazas/idpad/api/internal/store"
+	"github.com/ipedrazas/idpad/api/internal/tagger"
 )
 
 // Server wires the store and configuration into the HTTP handlers. It holds
 // every dependency explicitly; the package has no package-level state.
 type Server struct {
-	store *store.Store
-	log   *slog.Logger
-	cfg   config.Config
+	store  *store.Store
+	log    *slog.Logger
+	cfg    config.Config
+	tagger *tagger.Client
 }
 
-// NewServer builds the server and returns it ready to be mounted.
+// NewServer builds the server and returns it ready to be mounted. The tagging
+// client is nil when no service is configured, which the routes treat as the
+// feature being switched off rather than as an error.
 func NewServer(st *store.Store, log *slog.Logger, cfg config.Config) *Server {
-	return &Server{store: st, log: log, cfg: cfg}
+	return &Server{
+		store:  st,
+		log:    log,
+		cfg:    cfg,
+		tagger: tagger.New(cfg.TaggerURL, cfg.TaggerTimeout),
+	}
 }
 
 // Router returns the fully configured HTTP handler for the service.
@@ -63,6 +72,7 @@ func (s *Server) Router() http.Handler {
 				// PUT, not POST: the client sends the tag set it wants the
 				// idea to end up with, which is what a chip editor produces.
 				r.Put("/tags", s.handleSetIdeaTags)
+				r.Post("/tags/auto", s.handleAutoTagIdea)
 
 				r.Get("/links", s.handleListLinks)
 				r.Post("/links", s.handleCreateLink)
@@ -81,6 +91,10 @@ func (s *Server) Router() http.Handler {
 			r.Get("/", s.handleListTags)
 			r.Delete("/unused", s.handleDeleteUnusedTags)
 		})
+
+		// Lets the UI hide affordances the deployment cannot serve, rather
+		// than offering a button that always fails.
+		r.Get("/features", s.handleFeatures)
 
 		r.Delete("/links/{linkID}", s.handleDeleteLink)
 	})
@@ -111,6 +125,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleFeatures reports which optional capabilities this deployment has.
+func (s *Server) handleFeatures(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"auto_tagging": s.tagger.Enabled(),
+	})
 }
 
 // pathUUID reads a UUID path parameter, rejecting malformed ids with a 400 so
