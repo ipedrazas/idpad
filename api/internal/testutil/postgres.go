@@ -87,10 +87,14 @@ func NewPostgres(ctx context.Context) (*DB, func(), error) {
 
 // Reset truncates every table so each test starts from a known state. The
 // cascade follows the foreign keys, which is exactly the production behaviour.
+//
+// tags is named explicitly because it is a root table, not a child of ideas:
+// truncating ideas clears idea_tags but would leave the vocabulary standing,
+// and one test's tags would then be visible to the next.
 func (db *DB) Reset(t *testing.T) {
 	t.Helper()
 	ctx := t.Context()
-	if _, err := db.Pool.Exec(ctx, `truncate table ideas restart identity cascade`); err != nil {
+	if _, err := db.Pool.Exec(ctx, `truncate table ideas, tags restart identity cascade`); err != nil {
 		t.Fatalf("reset database: %v", err)
 	}
 }

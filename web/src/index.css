@@ -1,33 +1,53 @@
 @import 'tailwindcss';
 
 /*
- * Dark mode follows the OS. Tailwind v4 needs the variant declared explicitly
- * when it is not driven by a class on <html>.
+ * Dark mode is driven solely by the `dark` class on <html>, which the theme
+ * provider sets. The OS setting is deliberately *not* part of this variant:
+ * it is resolved once, in JS, so that choosing "light" on a dark-themed OS
+ * actually produces a light page instead of losing to the media query.
  */
-@custom-variant dark (&:where(.dark, .dark *), @media (prefers-color-scheme: dark));
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
 @layer base {
+  /*
+   * A starting value only: the inline script in index.html overwrites this
+   * with the resolved theme before the first paint, and the provider keeps it
+   * in step afterwards.
+   */
   html {
-    color-scheme: light dark;
+    color-scheme: light;
   }
 
   body {
     @apply bg-slate-50 text-slate-900 antialiased;
+    /* Theme changes should read as a settle, not a blink. */
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
   }
 
-  @media (prefers-color-scheme: dark) {
-    body {
-      @apply bg-slate-950 text-slate-100;
-    }
+  html.dark body {
+    @apply bg-slate-950 text-slate-100;
   }
 
   /* Focus rings are visible for keyboard users without boxing every click. */
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-slate-900/60;
+  }
+
+  .dark :focus-visible {
+    @apply outline-slate-100/60;
+  }
+
+  /* Respect a reduced-motion preference for the theme transition too. */
+  @media (prefers-reduced-motion: reduce) {
+    body {
+      transition: none;
+    }
   }
 }
 

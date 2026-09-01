@@ -58,6 +58,14 @@ func (s *Server) Router() http.Handler {
 
 				r.Get("/resources", s.handleListResources)
 				r.Post("/resources", s.handleCreateResource)
+
+				r.Get("/tags", s.handleListIdeaTags)
+				// PUT, not POST: the client sends the tag set it wants the
+				// idea to end up with, which is what a chip editor produces.
+				r.Put("/tags", s.handleSetIdeaTags)
+
+				r.Get("/links", s.handleListLinks)
+				r.Post("/links", s.handleCreateLink)
 			})
 		})
 
@@ -68,6 +76,13 @@ func (s *Server) Router() http.Handler {
 		})
 
 		r.Delete("/resources/{resourceID}", s.handleDeleteResource)
+
+		r.Route("/tags", func(r chi.Router) {
+			r.Get("/", s.handleListTags)
+			r.Delete("/unused", s.handleDeleteUnusedTags)
+		})
+
+		r.Delete("/links/{linkID}", s.handleDeleteLink)
 	})
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {

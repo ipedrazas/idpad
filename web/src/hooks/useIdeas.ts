@@ -1,14 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { api, type IdeaInput } from '../api/client'
+import { api, type IdeaFilter, type IdeaInput } from '../api/client'
 import type { Idea, IdeaSummary } from '../api/types'
 import { queryKeys } from './queryKeys'
 
-/** All ideas, newest update first, with the counts the cards show. */
-export function useIdeas() {
+/**
+ * Ideas matching the filter, newest update first, with the counts and tags the
+ * cards show. An omitted filter lists everything.
+ */
+export function useIdeas(filter?: IdeaFilter) {
   return useQuery<IdeaSummary[]>({
-    queryKey: queryKeys.ideas,
-    queryFn: api.listIdeas,
+    queryKey: queryKeys.ideaList(filter),
+    queryFn: () => api.listIdeas(filter),
+    // The previous list stays on screen while a new filter loads, so changing
+    // tags does not blank the grid on every keystroke.
+    placeholderData: (previous) => previous,
   })
 }
 

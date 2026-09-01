@@ -33,18 +33,49 @@ func (s *Store) CreateIdea(ctx context.Context, title string, body json.RawMessa
 	return idea, nil
 }
 
-// ListIdeas returns every idea, newest update first, with the counts the list
-// view renders. The counts come from correlated subqueries so a single round
-// trip feeds the whole page.
-func (s *Store) ListIdeas(ctx context.Context) ([]model.IdeaSummary, error) {
+// ListIdeas returns the ideas matching filter, newest update first, with the
+// counts and tags the list view renders. Everything the cards show comes from
+// correlated subqueries so a single round trip feeds the whole page.
+//
+// A zero filter lists every idea.
+func (s *Store) ListIdeas(ctx context.Context, filter model.IdeaFilter) ([]model.IdeaSummary, error) {
+	// $1..$3 are always bound, so an unset part of the filter is a predicate
+	// that is trivially true rather than a different query string.
 	const q = `
 		select i.id, i.title, i.body, i.created_at, i.updated_at,
 		       (select count(*) from comments c where c.idea_id = i.id)  as comment_count,
-		       (select count(*) from resources r where r.idea_id = i.id) as resource_count
+		       (select count(*) from resources r where r.idea_id = i.id) as resource_count,
+		       (select count(*) from idea_links l
+		         where l.source_idea_id = i.id or l.target_idea_id = i.id) as link_count,
+		       coalesce((
+		         select jsonb_agg(jsonb_build_object(
+		                  'id', t.id, 'name', t.name, 'slug', t.slug, 'created_at', t.created_at)
+		                order by t.slug)
+		         from tags t
+		         join idea_tags it on it.tag_id = t.id
+		         where it.idea_id = i.id
+		       ), '[]'::jsonb) as tags
 		from ideas i
+		where ($1::text[] is null or (
+		        select count(distinct t.slug)
+		        from tags t
+		        join idea_tags it on it.tag_id = t.id
+		        where it.idea_id = i.id and t.slug = any ($1)
+		      ) = cardinality($1))
+		  and ($2::text = '' or i.title ilike '%' || $2 || '%')
+		  and ($3::uuid is null or i.id <> $3)
 		order by i.updated_at desc, i.id desc`
 
-	rows, err := s.pool.Query(ctx, q)
+	var tagSlugs []string
+	if len(filter.TagSlugs) > 0 {
+		tagSlugs = filter.TagSlugs
+	}
+	var excludeID *string
+	if filter.ExcludeID != "" {
+		excludeID = &filter.ExcludeID
+	}
+
+	rows, err := s.pool.Query(ctx, q, tagSlugs, filter.Query, excludeID)
 	if err != nil {
 		return nil, fmt.Errorf("list ideas: %w", err)
 	}
@@ -52,10 +83,16 @@ func (s *Store) ListIdeas(ctx context.Context) ([]model.IdeaSummary, error) {
 
 	ideas := make([]model.IdeaSummary, 0)
 	for rows.Next() {
-		var it model.IdeaSummary
+		var (
+			it      model.IdeaSummary
+			rawTags []byte
+		)
 		if err := rows.Scan(&it.ID, &it.Title, &it.Body, &it.CreatedAt, &it.UpdatedAt,
-			&it.CommentCount, &it.ResourceCount); err != nil {
+			&it.CommentCount, &it.ResourceCount, &it.LinkCount, &rawTags); err != nil {
 			return nil, fmt.Errorf("scan idea: %w", err)
+		}
+		if err := json.Unmarshal(rawTags, &it.Tags); err != nil {
+			return nil, fmt.Errorf("decode idea tags: %w", err)
 		}
 		ideas = append(ideas, it)
 	}

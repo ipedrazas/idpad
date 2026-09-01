@@ -52,6 +52,17 @@ func newID() (string, error) {
 
 // isUniqueViolation reports whether err is a Postgres unique constraint error.
 func isUniqueViolation(err error) bool {
+	return hasPGCode(err, "23505")
+}
+
+// isForeignKeyViolation reports whether err is a Postgres foreign key error,
+// which is how a write naming a row that does not exist fails.
+func isForeignKeyViolation(err error) bool {
+	return hasPGCode(err, "23503")
+}
+
+// hasPGCode reports whether err is a Postgres error carrying SQLSTATE code.
+func hasPGCode(err error, code string) bool {
 	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+	return errors.As(err, &pgErr) && pgErr.Code == code
 }

@@ -4,7 +4,9 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { Anchor, Doc, Thread } from '../api/types'
 import { CommentSidebar } from '../components/CommentSidebar'
 import { IdeaEditor } from '../components/editor/IdeaEditor'
+import { LinkPanel } from '../components/LinkPanel'
 import { ResourcePanel } from '../components/ResourcePanel'
+import { TagEditor } from '../components/TagEditor'
 import { Button, ErrorState, Panel, Skeleton, Spinner } from '../components/ui'
 import {
   useCreateComment,
@@ -13,8 +15,10 @@ import {
   useSetCommentStatus,
   useUpdateComment,
 } from '../hooks/useComments'
-import { useDeleteIdea, useIdea, useUpdateIdea } from '../hooks/useIdeas'
+import { useDeleteIdea, useIdea, useIdeas, useUpdateIdea } from '../hooks/useIdeas'
+import { useCreateLink, useDeleteLink, useLinks } from '../hooks/useLinks'
 import { useCreateResource, useDeleteResource, useResources } from '../hooks/useResources'
+import { useIdeaTags, useSetIdeaTags, useTags } from '../hooks/useTags'
 import { anchorMatchesDoc } from '../lib/anchor'
 import { absoluteTime, relativeTime } from '../lib/format'
 
@@ -30,6 +34,9 @@ export function IdeaDetailPage() {
   const ideaQuery = useIdea(id)
   const commentsQuery = useComments(id)
   const resourcesQuery = useResources(id)
+  const tagsQuery = useIdeaTags(id)
+  const vocabularyQuery = useTags()
+  const linksQuery = useLinks(id)
 
   const ideaId = id ?? ''
   const updateIdea = useUpdateIdea(ideaId)
@@ -40,6 +47,9 @@ export function IdeaDetailPage() {
   const setCommentStatus = useSetCommentStatus(ideaId)
   const createResource = useCreateResource(ideaId)
   const deleteResource = useDeleteResource(ideaId)
+  const setIdeaTags = useSetIdeaTags(ideaId)
+  const createLink = useCreateLink(ideaId)
+  const deleteLink = useDeleteLink(ideaId)
 
   // Local copies of the fields the user edits. They are seeded once from the
   // server so a background refetch never overwrites in-flight typing.
@@ -49,7 +59,15 @@ export function IdeaDetailPage() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [linkSearch, setLinkSearch] = useState('')
 
+  // Candidates for a new link: every other idea, narrowed by the search box.
+  // Excluding this idea server-side is what keeps a self-link unofferable.
+  const candidatesQuery = useIdeas({ q: linkSearch, exclude: ideaId })
+
+  // Local copies are seeded once per mount, so a background refetch never
+  // overwrites in-flight typing. The route keys this component by idea id, so
+  // following a connection remounts it and re-seeds from the new idea.
   const seeded = useRef(false)
   const idea = ideaQuery.data
 
@@ -195,6 +213,18 @@ export function IdeaDetailPage() {
         placeholder="Untitled idea"
       />
 
+      <div className="mt-4 max-w-2xl">
+        <TagEditor
+          tags={tagsQuery.data ?? []}
+          vocabulary={vocabularyQuery.data}
+          loading={tagsQuery.isPending}
+          error={tagsQuery.error}
+          onChange={async (names) => {
+            await setIdeaTags.mutateAsync(names)
+          }}
+        />
+      </div>
+
       <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <Panel className="p-6">
           {body ? (
@@ -245,6 +275,22 @@ export function IdeaDetailPage() {
             }}
             onRemove={async (resourceId) => {
               await deleteResource.mutateAsync(resourceId)
+            }}
+          />
+
+          <LinkPanel
+            links={linksQuery.data ?? []}
+            loading={linksQuery.isPending}
+            error={linksQuery.error}
+            candidates={candidatesQuery.data ?? []}
+            candidatesLoading={candidatesQuery.isPending}
+            search={linkSearch}
+            onSearchChange={setLinkSearch}
+            onAdd={async (input) => {
+              await createLink.mutateAsync(input)
+            }}
+            onRemove={async (linkId) => {
+              await deleteLink.mutateAsync(linkId)
             }}
           />
         </aside>

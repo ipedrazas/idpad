@@ -46,11 +46,25 @@ type Idea struct {
 }
 
 // IdeaSummary is an idea as rendered in the list view, carrying the counts
-// the cards display so the UI needs a single request.
+// and tags the cards display so the UI needs a single request.
 type IdeaSummary struct {
 	Idea
-	CommentCount  int `json:"comment_count"`
-	ResourceCount int `json:"resource_count"`
+	CommentCount  int   `json:"comment_count"`
+	ResourceCount int   `json:"resource_count"`
+	LinkCount     int   `json:"link_count"`
+	Tags          []Tag `json:"tags"`
+}
+
+// IdeaFilter narrows the idea list. A zero filter lists everything.
+type IdeaFilter struct {
+	// TagSlugs keeps only ideas carrying every listed tag, so stacking tags
+	// narrows the list rather than widening it.
+	TagSlugs []string
+	// Query is a case-insensitive substring match against the title.
+	Query string
+	// ExcludeID drops one idea from the results, which is what the link
+	// picker needs so an idea is never offered a link to itself.
+	ExcludeID string
 }
 
 // Anchor ties a thread root to a range of the idea's flattened block text.
@@ -93,4 +107,93 @@ type Resource struct {
 	URL       string       `json:"url"`
 	Label     *string      `json:"label"`
 	CreatedAt time.Time    `json:"created_at"`
+}
+
+// Tag is a label shared across ideas. Slug is the folded identity used for
+// uniqueness and lookup; Name is what the user typed.
+type Tag struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Slug      string    `json:"slug"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// TagSummary is a tag as listed in the tag index, carrying how many ideas
+// currently reference it.
+type TagSummary struct {
+	Tag
+	IdeaCount int `json:"idea_count"`
+}
+
+// Relation is the kind of connection one idea has to another.
+type Relation string
+
+// Link relations. references and expands are directed and read differently
+// from each end; similar and related are symmetric.
+const (
+	RelationReferences Relation = "references"
+	RelationExpands    Relation = "expands"
+	RelationSimilar    Relation = "similar"
+	RelationRelated    Relation = "related"
+)
+
+// Relations lists every relation the API accepts, in the order the UI offers
+// them.
+var Relations = []Relation{RelationReferences, RelationExpands, RelationSimilar, RelationRelated}
+
+// Valid reports whether r is a relation the API accepts.
+func (r Relation) Valid() bool {
+	for _, candidate := range Relations {
+		if r == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+// Symmetric reports whether the relation reads the same from both ends, in
+// which case it has no distinct inverse.
+func (r Relation) Symmetric() bool {
+	return r == RelationSimilar || r == RelationRelated
+}
+
+// Inverse returns the relation as seen from the target idea. Symmetric
+// relations are their own inverse; the directed ones name the passive side.
+func (r Relation) Inverse() Relation {
+	switch r {
+	case RelationReferences:
+		return "referenced_by"
+	case RelationExpands:
+		return "expanded_by"
+	default:
+		return r
+	}
+}
+
+// LinkDirection says which end of a stored link an idea sits on: outgoing
+// when it is the source, incoming when it is the target.
+type LinkDirection string
+
+// Link directions, relative to the idea being viewed.
+const (
+	DirectionOutgoing LinkDirection = "outgoing"
+	DirectionIncoming LinkDirection = "incoming"
+)
+
+// Link is a typed connection between two ideas, rendered from the point of
+// view of one of them. Relation is always the stored relation; Direction says
+// whether the viewing idea is the source or the target, and Other identifies
+// the idea at the far end.
+type Link struct {
+	ID           string        `json:"id"`
+	SourceIdeaID string        `json:"source_idea_id"`
+	TargetIdeaID string        `json:"target_idea_id"`
+	Relation     Relation      `json:"relation"`
+	Note         *string       `json:"note"`
+	CreatedAt    time.Time     `json:"created_at"`
+	Direction    LinkDirection `json:"direction"`
+	// OtherIdeaID and OtherTitle describe the idea at the far end of the link,
+	// so the UI can render a row without a second request.
+	OtherIdeaID string `json:"other_idea_id"`
+	OtherTitle  string `json:"other_title"`
 }
